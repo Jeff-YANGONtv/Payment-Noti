@@ -4,11 +4,15 @@ export default {
       return new Response("Method Not Allowed", { status: 405 });
     }
 
-    // 1. Bearer Token စစ်ဆေးခြင်း
     const authHeader = request.headers.get("Authorization") || "";
     const expectedToken = `Bearer ${env.WEBHOOK_TOKEN}`;
     if (!env.WEBHOOK_TOKEN || authHeader !== expectedToken) {
       return new Response("Unauthorized", { status: 401 });
+    }
+
+    if (!env.TG_BOT_TOKEN || !env.TG_CHAT_ID) {
+      console.error("Missing TG_BOT_TOKEN or TG_CHAT_ID secret");
+      return new Response("Missing Telegram secrets", { status: 500 });
     }
 
     let payload;
@@ -18,32 +22,29 @@ export default {
       return new Response("Invalid JSON", { status: 400 });
     }
 
-    // 2. Message487 Payload မှ စာသားများ ထုတ်ယူခြင်း
     const eventType = payload.type || payload.event || "event";
     const device = payload.device || payload.device_code || "Android";
     const appName = payload.app_name || payload.package_name || "";
     const sender = payload.sender || payload.phone || "";
     const title = payload.title || "";
-    const bodyText = payload.text || payload.message || payload.body || JSON.stringify(payload);
+    const rawBody = payload.text || payload.message || payload.body || "";
 
     const lines = [
       `<b>[${escapeHtml(String(eventType).toUpperCase())}]</b> — <code>${escapeHtml(String(device))}</code>`,
     ];
-
     if (appName) lines.push(`<b>App:</b> ${escapeHtml(String(appName))}`);
     if (sender) lines.push(`<b>From:</b> <code>${escapeHtml(String(sender))}</code>`);
     if (title) lines.push(`<b>Title:</b> ${escapeHtml(String(title))}`);
-    if (bodyText) lines.push(`\n${escapeHtml(String(bodyText))}`);
+    if (rawBody) lines.push(`\n${escapeHtml(String(rawBody))}`);
 
-    const telegramText = lines.join("\n").slice(0, 4000); // Telegram max 4096 chars
+    const telegramText = lines.join("\n").slice(0, 4000);
 
-    // 3. Telegram Bot API ဆီ ပို့ခြင်း
-    const tgUrl = `https://api.telegram.org/bot${env.TG_BOT_TOKEN}/sendMessage`;
+    const tgUrl = `https://api.telegram.org/bot${env.TG_BOT_TOKEN.trim()}/sendMessage`;
     const tgRes = await fetch(tgUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        chat_id: env.TG_CHAT_ID,
+        chat_id: String(env.TG_CHAT_ID).trim(),
         text: telegramText,
         parse_mode: "HTML",
         disable_web_page_preview: true,
@@ -52,6 +53,7 @@ export default {
 
     const tgData = await tgRes.json();
     if (!tgRes.ok || !tgData.ok) {
+      console.error("Telegram API failed:", JSON.stringify(tgData));
       return new Response(JSON.stringify({ ok: false, telegram: tgData }), {
         status: 502,
         headers: { "Content-Type": "application/json" },
@@ -70,4 +72,4 @@ function escapeHtml(str) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
-}
+      }
